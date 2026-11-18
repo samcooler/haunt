@@ -8,6 +8,7 @@ commands. The HTTP API is for curl, the CLI and Claude:
   POST /api/in/<node>/<input>  inject an input as if a node sent it (simulation)
   GET  /media/<file>           the piece's media, for nodes to download
   GET  /fw/<file>              firmware images, for ESP32 OTA
+  GET  /display/<name>         a full-screen page that is the node <name> (out/display slides)
   POST /api/ota/<node>?name=f  body = firmware image; stores it and tells the node to fetch it
 """
 
@@ -39,9 +40,12 @@ class Hub:
         self.log: deque = deque(maxlen=300)
         self.clients: set[web.WebSocketResponse] = set()
         self.port = 8080
+        self.displays: dict[str, int] = {}   # browser display nodes: name -> open pages
         bus.subscribe(f"{topics.ROOT}/#", self._on)
 
     async def _on(self, topic: str, payload: Any) -> None:
+        if topics.noisy(topic):
+            return
         if topic == topics.SHOW_LOG:
             self.log.append(payload)
         elif payload is None:
@@ -80,6 +84,12 @@ class Hub:
     async def ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=10)
         await ws.prepare(request)
+        node = request.query.get("node")   # a /display/<name> page: this browser is that node
+        if node:
+            self.displays[node] = self.displays.get(node, 0) + 1
+            await self.bus.publish(topics.status(node), {
+                "online": True, "id": node, "kind": "browser", "fw": "haunt display",
+                "ip": request.remote, "caps": ["display"]}, retain=True)
         for topic, p in list(self.latest.items()):
             await ws.send_str(json.dumps({"topic": topic, "p": p}))
         for p in list(self.log):
@@ -96,6 +106,11 @@ class Hub:
                     pass
         finally:
             self.clients.discard(ws)
+            if node:
+                self.displays[node] -= 1
+                if not self.displays[node]:
+                    await self.bus.publish(topics.status(node), {"online": False, "id": node,
+                                                                 "kind": "browser"}, retain=True)
         return ws
 
     async def send(self, topic: str, payload: Any) -> None:
@@ -140,10 +155,14 @@ class Hub:
     async def page(self, request: web.Request) -> web.FileResponse:
         return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-cache"})
 
+    async def display(self, request: web.Request) -> web.FileResponse:
+        return web.FileResponse(WEB / "display.html", headers={"Cache-Control": "no-cache"})
+
     def app(self) -> web.Application:
         app = web.Application(client_max_size=8 * 1024 * 1024)
         app.router.add_get("/", self.page)
         app.router.add_get("/console", self.page)
+        app.router.add_get("/display/{name}", self.display)
         app.router.add_get("/ws", self.ws)
         app.router.add_get("/api/snapshot", self.api_snapshot)
         app.router.add_post("/api/cmd/{verb}", self.api_cmd)

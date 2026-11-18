@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>haunt display</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden; cursor: none;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  #slide { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 6vmin; box-sizing: border-box; white-space: pre-line;
+    font-weight: 700; line-height: 1.15; transition: background-color .6s, color .6s; }
+  #name { position: fixed; bottom: 8px; right: 12px; font: 12px monospace; opacity: .35; }
+</style>
+</head>
+<body>
+<div id="slide"></div>
+<div id="name"></div>
+<script>
+// A browser as a node: it shows out/display for the node named in the URL
+// (/display/<name>). Payload: {slides: [{text, bg, fg, seconds}]}, cycled; [] is dark.
+const name = decodeURIComponent(location.pathname.split("/").pop());
+const el = document.getElementById("slide");
+document.getElementById("name").textContent = name;
+let slides = [], idx = 0, timer = null;
+
+function fit() {
+  // Largest font that keeps the text inside the screen.
+  let size = Math.min(innerWidth, innerHeight) / 3;
+  el.style.fontSize = size + "px";
+  while (size > 12 && (el.scrollHeight > innerHeight || el.scrollWidth > innerWidth)) {
+    size *= 0.9; el.style.fontSize = size + "px";
+  }
+}
+function show() {
+  clearTimeout(timer);
+  if (!slides.length) { el.textContent = ""; el.style.background = "#000"; return; }
+  const s = slides[idx % slides.length];
+  el.textContent = (s.text || "").replace(/\\N/g, "\n");
+  el.style.background = s.bg || "#000";
+  el.style.color = s.fg || "#fff";
+  fit();
+  if (slides.length > 1) timer = setTimeout(() => { idx++; show(); }, (s.seconds || 6) * 1000);
+}
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?node=${encodeURIComponent(name)}`);
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.topic !== `haunt/n/${name}/out/display` || !m.p) return;
+    slides = m.p.slides || (m.p.text !== undefined ? [m.p] : []);
+    idx = 0; show();
+  };
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+addEventListener("resize", fit);
+connect();
+</script>
+</body>
+</html>

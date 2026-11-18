@@ -63,6 +63,6 @@ commit the changes.
 |---|---|
 | `haunt/` | the runtime: engine, bus, web UI, node agent, CLI |
 | `firmware/` | the one ESP32 firmware (PlatformIO) |
-| `pieces/` | pieces; `hello` is the worked example |
+| `pieces/` | pieces: `hello` is the worked example, `synclever` the lever room (formerly Pulleys) |
 | `deploy/` | Pi setup |
 | `tests/` | `pytest` |

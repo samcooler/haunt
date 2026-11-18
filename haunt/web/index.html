@@ -198,6 +198,10 @@ function inputControls(name, dev, n) {
     const last = n?.in?.[inp];
     const val = last && last.value !== undefined && last.value !== null ? ` <span class="dim mono">${esc(last.value)}</span>` : "";
     const q = (s) => esc(JSON.stringify(s));
+    if (kind === "motion") return `<button onclick="input(${q(name)},${q(inp)},'pull')">${esc(inp)} ↕</button>${val}`;
+    if (kind === "digital") return `<span class="dim">${esc(inp)}</span>
+        <button onclick="input(${q(name)},${q(inp)},'on')">on</button>
+        <button onclick="input(${q(name)},${q(inp)},'off')">off</button>`;
     if (kind === "analog") {
       const th = cfg.threshold ?? 2000;
       return `<span class="dim">${esc(inp)}</span>

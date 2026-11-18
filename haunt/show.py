@@ -14,10 +14,25 @@
     async def play(s):
         ...
 
-A state is an async function. It returns the name of the next state, or nothing
-to stay put until something else moves the show (a timeout, a handler, an
-operator). Every state can have a timeout. `idle_reset` sends the show back to
+A state is a function. As an async function it can wait and sleep: it returns
+the name of the next state, or nothing to stay put until something else moves
+the show (a timeout, a handler, an operator). As a plain function it runs the
+moment the show enters it, sets the room up and registers what it reacts to,
+all before the event that moved the show has finished (so the rest of a burst
+of events lands in the new state, in order):
+
+    @show.state(timeout="round_time", then="passive")
+    def round(s):
+        s.leds("lamp", effect="solid", color="#ff0000")
+        s.on("lamp.button.press", lambda ev: s.goto("won"))      # while in this state
+        s.every(8, lambda: s.play("speaker", "keep_going.wav"))  # while in this state
+        s.idle(12, lambda: s.play("speaker", "hello.wav"))       # after 12 s of quiet
+        s.at(5, lambda: s.leds("lamp", effect="breathe"))        # 5 s in
+
+Every state can have a timeout. `idle_reset` sends the show back to
 the initial state when nobody has touched anything for that many seconds.
+s.keep holds live objects (a game model) across reloads; s.load("x.yaml")
+reads a piece's own file; s.pick("folder/name_*") picks media.
 
 Output values may be functions of the params (`lambda p: p.idle_color`): they are
 re-sent whenever a param changes, which is what makes live tuning work.

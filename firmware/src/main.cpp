@@ -16,6 +16,8 @@
 #include <ArduinoJson.h>
 #include <Adafruit_NeoPixel.h>
 #include <vector>
+#include "imu.h"
+#include "detect.h"
 
 #ifndef HAUNT_FW
 #define HAUNT_FW "dev"
@@ -47,12 +49,16 @@ String tOut() { return "haunt/n/" + name + "/out/#"; }
 String tIn(const String &input) { return "haunt/n/" + name + "/in/" + input; }
 
 // ---------------------------------------------------------------- LEDs
-enum Effect { OFF, SOLID, BREATHE, CHASE, RAINBOW, SPARKLE };
+enum Effect { OFF, SOLID, BREATHE, CHASE, RAINBOW, SPARKLE, LEVEL, FLICKER };
 
 struct LedSpec {
   Effect effect = OFF;
   uint32_t c1 = 0xFFFFFF, c2 = 0x000000;
   float speed = 0.5f, bright = 1.0f, fade = 0.3f;
+  float level = 0.0f, drain = 0.0f;   // LEVEL: fill 0..1, falling by `drain` per second on its own
+  float pulse = 0.0f;                 // any effect: breathe its brightness at this many Hz (0: steady)
+  uint8_t tube = 8, gap = 3;          // FLICKER: pixels per tube and between tubes
+  uint32_t setMs = 0;
 };
 
 Adafruit_NeoPixel *strip = nullptr;
@@ -60,7 +66,16 @@ int ledCount = 0;
 float maxBright = 0.5f;          // heat budget from devices.yaml; never exceeded
 LedSpec spec, fallbackSpec;
 std::vector<uint32_t> frame, fromFrame;
+std::vector<float> height;       // 0 (bottom) .. 1 (top) per pixel, within its segment: LEVEL fills by it
+std::vector<uint8_t> pixelCap;   // per-pixel brightness cap from its segment (255 = the node's max)
+std::vector<bool> pixelSwap;     // a segment whose chip reads R and G the other way round
 uint32_t fadeStart = 0, fadeMs = 0, identifyUntil = 0;
+
+// FLICKER: failing fluorescent tubes. Each strikes with a stutter when switched on,
+// hums, and drops out in ragged bursts now and then; one tube is the bad one.
+struct Tube { float wait = 0, burst = 0, next = 0; };
+std::vector<Tube> tubes;
+int badTube = 0;
 
 static uint32_t parseColor(const char *s, uint32_t dflt) {
   if (!s || s[0] != '#') return dflt;
@@ -79,6 +94,8 @@ static Effect parseEffect(const char *s) {
   if (!strcmp(s, "chase")) return CHASE;
   if (!strcmp(s, "rainbow")) return RAINBOW;
   if (!strcmp(s, "sparkle")) return SPARKLE;
+  if (!strcmp(s, "level")) return LEVEL;
+  if (!strcmp(s, "flicker")) return FLICKER;
   return SOLID;
 }
 
@@ -90,6 +107,12 @@ static LedSpec parseSpec(JsonVariantConst j) {
   s.speed = j["speed"] | 0.5f;
   s.bright = constrain(j["brightness"] | 1.0f, 0.0f, 1.0f);
   s.fade = j["fade"] | 0.3f;
+  s.level = constrain(j["level"] | 0.0f, 0.0f, 1.0f);
+  s.drain = j["drain"] | 0.0f;
+  s.pulse = j["pulse"] | 0.0f;
+  s.tube = j["tube"] | 8;
+  s.gap = j["gap"] | 3;
+  s.setMs = millis();
   return s;
 }
 
@@ -109,7 +132,41 @@ static uint32_t hsv(float h) {
   return Adafruit_NeoPixel::ColorHSV((uint16_t)(fmodf(h, 1.0f) * 65535), 255, 255);
 }
 
+static float frand() { return (esp_random() % 10000) / 10000.0f; }
+
+// One tube's brightness now (0..1). t: seconds since the effect was set.
+static float tubeLevel(Tube &tb, int idx, float t, float dt) {
+  if (t < tb.wait) return 0.0f;                                  // not struck yet
+  if (t < tb.wait + 0.5f) return (esp_random() % 3) ? 0.0f : 1.0f; // the strike's stutter
+  if (tb.burst > 0) {
+    tb.burst -= dt;
+    return (esp_random() % 2) ? 0.15f : 1.0f;
+  }
+  if (t > tb.next) {
+    tb.burst = 0.15f + 0.35f * frand();
+    tb.next = t + (idx == badTube ? 1.8f : 14.0f) * (0.4f + 1.2f * frand());
+  }
+  return 0.96f + 0.04f * frand();                                // the hum
+}
+
 static void renderEffect(const LedSpec &s, float t, std::vector<uint32_t> &out) {
+  float since = (millis() - s.setMs) / 1000.0f;
+  if (s.effect == FLICKER) {
+    static uint32_t lastMs = 0;
+    float dt = (millis() - lastMs) / 1000.0f;
+    lastMs = millis();
+    int period = max(1, (int)s.tube + (int)s.gap);
+    std::vector<float> lv(tubes.size());
+    for (size_t k = 0; k < tubes.size(); k++) lv[k] = tubeLevel(tubes[k], k, since, dt);
+    for (int i = 0; i < ledCount; i++) {
+      int k = i / period;
+      bool lit = (i % period) < s.tube && k < (int)lv.size();
+      out[i] = lit ? scale(s.c1, s.bright * lv[k]) : 0;
+    }
+    return;
+  }
+  float fill = s.level - s.drain * since;
+  float pulse = s.pulse > 0 ? 0.65f + 0.35f * cosf(2 * PI * s.pulse * t) : 1.0f;
   for (int i = 0; i < ledCount; i++) {
     uint32_t c = 0;
     switch (s.effect) {
@@ -119,12 +176,24 @@ static void renderEffect(const LedSpec &s, float t, std::vector<uint32_t> &out) 
       case CHASE: c = (int)floorf(i / 4.0f - t * s.speed * 8) % 2 ? s.c1 : s.c2; break;
       case RAINBOW: c = hsv((float)i / max(ledCount, 1) + t * s.speed * 0.2f); break;
       case SPARKLE: c = (esp_random() % 100) < 6 ? s.c1 : s.c2; break;
+      case LEVEL: c = height[i] < fill ? s.c1 : s.c2; break;
+      case FLICKER: break;
     }
-    out[i] = scale(c, s.bright);
+    out[i] = scale(c, s.bright * pulse);
   }
 }
 
 void setLeds(const LedSpec &s) {
+  if (s.effect == FLICKER && spec.effect != FLICKER) {
+    // Switched on: every tube strikes after a wait of its own.
+    int period = max(1, (int)s.tube + (int)s.gap);
+    tubes.assign((ledCount + period - 1) / period, Tube());
+    for (auto &tb : tubes) {
+      tb.wait = 1.6f * frand();
+      tb.next = tb.wait + 3.0f + 10.0f * frand();
+    }
+    badTube = tubes.empty() ? 0 : esp_random() % tubes.size();
+  }
   fromFrame = frame;
   spec = s;
   fadeStart = millis();
@@ -154,6 +223,42 @@ void configureLeds(JsonVariantConst cfg) {
   }
   frame.assign(ledCount, 0);
   fromFrame.assign(ledCount, 0);
+  height.assign(ledCount, 0.0f);
+  pixelCap.assign(ledCount, 255);
+  pixelSwap.assign(ledCount, false);
+  for (int i = 0; i < ledCount; i++) height[i] = ledCount > 1 ? (float)i / (ledCount - 1) : 0.0f;
+  // Segments: the surfaces along the chain. A strip {start, count, reverse} rises from
+  // its first LED (reverse: its first LED is the top). A matrix {start, cols, rows,
+  // serpentine, flip, row_major} is wired in columns of `rows` (or in rows of `cols`
+  // with row_major); LEVEL fills it bottom row first. `brightness` caps a segment below
+  // the node's max (a dense panel runs hotter). `swap_rg`: the segment's chips are RGB
+  // on a GRB chain (or the reverse): one order per output, so it is fixed per pixel.
+  for (JsonVariantConst seg : cfg["segments"].as<JsonArrayConst>()) {
+    int start = seg["start"] | 0;
+    float cap = constrain(seg["brightness"] | 1.0f, 0.0f, 1.0f);
+    int rows = seg["rows"] | 0, cols = seg["cols"] | 0;
+    int n = rows && cols ? rows * cols : (int)(seg["count"] | 0);
+    for (int k = 0; k < n && start + k < ledCount; k++) {
+      int i = start + k;
+      float h;
+      if (rows && cols && (seg["row_major"] | false)) {
+        int r = rows - 1 - k / cols;           // first row wired is the top
+        if (seg["flip"] | false) r = rows - 1 - r;
+        h = rows > 1 ? (float)r / (rows - 1) : 0.0f;
+      } else if (rows && cols) {
+        int col = k / rows, r = k % rows;
+        if ((seg["serpentine"] | true) && (col % 2)) r = rows - 1 - r;
+        if (seg["flip"] | false) r = rows - 1 - r;
+        h = rows > 1 ? (float)r / (rows - 1) : 0.0f;
+      } else {
+        h = n > 1 ? (float)k / (n - 1) : 0.0f;
+        if (seg["reverse"] | false) h = 1.0f - h;
+      }
+      height[i] = h;
+      pixelCap[i] = (uint8_t)(cap * 255);
+      pixelSwap[i] = seg["swap_rg"] | false;
+    }
+  }
 }
 
 void tickLeds() {
@@ -176,12 +281,19 @@ void tickLeds() {
     }
   }
   frame = next;
-  for (int i = 0; i < ledCount; i++) strip->setPixelColor(i, scale(frame[i], maxBright));
+  for (int i = 0; i < ledCount; i++) {
+    uint32_t c = scale(frame[i], maxBright * pixelCap[i] / 255.0f);
+    if (pixelSwap[i]) {
+      uint32_t r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      c = g << 16 | r << 8 | b;
+    }
+    strip->setPixelColor(i, c);
+  }
   strip->show();
 }
 
 // ---------------------------------------------------------------- inputs
-enum InKind { IN_BUTTON, IN_DIGITAL, IN_ANALOG };
+enum InKind { IN_BUTTON, IN_DIGITAL, IN_ANALOG, IN_MOTION };
 
 struct Input {
   String name;
@@ -192,6 +304,14 @@ struct Input {
   uint32_t changedAt = 0, reportedAt = 0, reportMs = 0, debounceMs = 30;
 };
 std::vector<Input> inputs;
+
+// One IMU per board: a `motion` input (a rope's pull) reads it at 100 Hz.
+pulleys::IMU imu;
+pulleys::Detector detector;
+pulleys::RoughGuard rough;
+bool imuUp = false;
+int motionInput = -1;
+uint32_t lastImuMs = 0;
 
 void publishIn(const Input &in, const char *event, int value, bool withValue) {
   if (!mqtt.connected()) return;
@@ -205,12 +325,31 @@ void publishIn(const Input &in, const char *event, int value, bool withValue) {
 
 void configureInputs(JsonVariantConst cfg) {
   inputs.clear();
+  motionInput = -1;
   for (JsonPairConst kv : cfg.as<JsonObjectConst>()) {
     Input in;
     in.name = kv.key().c_str();
     JsonVariantConst c = kv.value();
     String kind = c["kind"] | "button";
-    in.kind = kind == "analog" ? IN_ANALOG : kind == "digital" ? IN_DIGITAL : IN_BUTTON;
+    in.kind = kind == "analog" ? IN_ANALOG : kind == "digital" ? IN_DIGITAL : kind == "motion" ? IN_MOTION : IN_BUTTON;
+    if (in.kind == IN_MOTION) {
+      // Defaults are the Pulleys rope sensor's, as tuned on site.
+      pulleys::DetectConfig dc;
+      String mode = c["mode"] | "linear";
+      dc.mode = mode == "rotation" ? 0 : 1;
+      float k = c["sensitivity"] | 0.8f;           // < 1: less motion needed
+      dc.rotThresholdDeg = (c["rot_deg"] | 180.0f) * k;
+      dc.rotStartDps *= k;
+      dc.linStartG *= k;
+      dc.linImpulseGs *= k;
+      dc.refractoryMs = c["cooldown_ms"] | 1000;
+      detector.init(dc);
+      if (!imuUp) imuUp = imu.init6(c["sda"] | 11, c["scl"] | 12);
+      if (!imuUp) Serial.println("motion: IMU init failed");
+      motionInput = inputs.size();
+      inputs.push_back(in);
+      continue;
+    }
     in.pin = c["pin"] | -1;
     in.pullup = c["pullup"] | true;
     in.invert = c["invert"] | false;
@@ -225,9 +364,26 @@ void configureInputs(JsonVariantConst cfg) {
   }
 }
 
+void tickMotion(uint32_t now) {
+  if (!imuUp || motionInput < 0 || now - lastImuMs < 10) return;
+  float dt = (now - lastImuMs) / 1000.0f;
+  lastImuMs = now;
+  pulleys::AccelData a;
+  pulleys::IMU::Gyro g;
+  if (!imu.read6(a, g)) return;
+  uint8_t mag = 0;
+  bool tooRough = rough.update(a.x, a.y, a.z, g.x, g.y, g.z, now);
+  if (detector.update(a.x, a.y, a.z, g.x, g.y, g.z, dt, mag)) {
+    if (tooRough) Serial.printf("motion: too rough, not counted (mag %d)\n", mag);
+    else publishIn(inputs[motionInput], "pull", mag, true);
+  }
+}
+
 void tickInputs() {
   uint32_t now = millis();
+  tickMotion(now);
   for (auto &in : inputs) {
+    if (in.kind == IN_MOTION) continue;
     if (in.kind == IN_ANALOG) {
       in.value = analogRead(in.pin);
       bool on = in.state ? in.value > in.threshold - in.hysteresis : in.value > in.threshold;
@@ -255,10 +411,41 @@ void tickInputs() {
   }
 }
 
+// ---------------------------------------------------------------- switches
+// Plain outputs: relays, SSRs, a door latch. config switches: {name: {pin, invert}};
+// out/switch {name: true|false, ...}. All off at boot until told otherwise.
+struct Switch { String name; int pin; bool invert; bool on; };
+std::vector<Switch> switches;
+
+void writeSwitch(Switch &sw, bool on) {
+  sw.on = on;
+  digitalWrite(sw.pin, (on != sw.invert) ? HIGH : LOW);
+}
+
+void configureSwitches(JsonVariantConst cfg) {
+  for (JsonPairConst kv : cfg.as<JsonObjectConst>()) {
+    int pin = kv.value()["pin"] | -1;
+    if (pin < 0) continue;
+    bool found = false;
+    for (auto &sw : switches) found |= sw.name == kv.key().c_str();
+    if (found) continue;
+    Switch sw{kv.key().c_str(), pin, kv.value()["invert"] | false, false};
+    pinMode(pin, OUTPUT);
+    writeSwitch(sw, false);
+    switches.push_back(sw);
+  }
+}
+
+void setSwitches(JsonVariantConst j) {
+  for (auto &sw : switches)
+    if (!j[sw.name.c_str()].isNull()) writeSwitch(sw, j[sw.name.c_str()].as<bool>());
+}
+
 // ---------------------------------------------------------------- config
 void applyConfig(JsonVariantConst cfg) {
   configureLeds(cfg["leds"]);
   configureInputs(cfg["inputs"]);
+  configureSwitches(cfg["switches"]);
   if (!cfg["fallback"].isNull()) fallbackSpec = parseSpec(cfg["fallback"]);
 }
 
@@ -289,6 +476,7 @@ void publishStatus(bool online = true) {
   JsonArray caps = d["caps"].to<JsonArray>();
   if (strip) caps.add("leds");
   for (auto &in : inputs) caps.add(in.name);
+  for (auto &sw : switches) caps.add(sw.name);
   String s;
   serializeJson(d, s);
   mqtt.publish(tStatus().c_str(), s.c_str(), true);
@@ -354,6 +542,7 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
   if (!t.startsWith(prefix)) return;
   String out = t.substring(prefix.length());
   if (out == "leds") setLeds(parseSpec(d.as<JsonVariantConst>()));
+  else if (out == "switch") setSwitches(d.as<JsonVariantConst>());
   else if (out == "identify") identifyUntil = millis() + (uint32_t)((d["seconds"] | 3.0f) * 1000);
   else if (out == "ota") doOta(d["url"] | "");
   else if (out == "reboot") ESP.restart();

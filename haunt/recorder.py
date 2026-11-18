@@ -20,5 +20,7 @@ class Recorder:
         bus.subscribe(f"{topics.ROOT}/#", self._on)
 
     def _on(self, topic: str, payload: Any) -> None:
+        if topics.noisy(topic):
+            return
         self._f.write(json.dumps({"t": round(time.time(), 3), "topic": topic, "p": payload},
                                  separators=(",", ":")) + "\n")

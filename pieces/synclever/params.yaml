@@ -1,0 +1,28 @@
+# Every knob of the game, as the first install ended up tuned. Durations in seconds.
+# Each is a slider in the console (http://haunt.local:8080/console) and applies live.
+
+charge_per_pull: {value: 40, min: 10, max: 60, unit: "%", label: "Charge per pull"}
+final_charge_per_pull: {value: 12.5, min: 5, max: 60, unit: "%", label: "Purple charge per pull"}   # 12.5: eight purple pulls (within the drain) win
+decay_rate: {value: 6.6667, min: 3, max: 12, step: 0.1, unit: "%/s", label: "Drain"}   # 6.67 lasts 15 s from full
+
+round_time: {value: 120, min: 60, max: 240, unit: s, label: "Round time"}
+nag_delay: {value: 12, min: 6, max: 30, unit: s, label: "Nag after quiet"}
+encourage_every: {value: 8, min: 5, max: 20, unit: s}
+productivity_every: {value: 15, min: 8, max: 40, unit: s}
+stray_limit: {value: 3, min: 2, max: 6, label: "Wrong pulls before Janis snaps"}
+easy_goals: {value: 1, min: 1, max: 3}
+medium_goals: {value: 2, min: 1, max: 4}
+hard_goals: {value: 3, min: 2, max: 5}
+
+party_time: {value: 40, min: 5, max: 120, unit: s}
+first_lever_time: {value: 80, min: 15, max: 120, unit: s, label: "Time to pull purple"}
+final_time: {value: 180, min: 60, max: 300, unit: s, label: "Final time"}
+victory_time: {value: 36, min: 10, max: 60, unit: s}   # the jailbreak video is 31 s, then 5 s of idle
+kickout_time: {value: 30, min: 5, max: 60, unit: s}
+
+# How it looks. Brightness is a heat budget on the ropes (their panels are potted in
+# plastic): the firmware caps each node at devices.yaml's max_brightness whatever this says.
+rope_idle: {value: 0.25, min: 0, max: 1, step: 0.05, label: "Rope glow at rest"}
+extractor_brightness: {value: 1.0, min: 0.1, max: 1, step: 0.05}
+diorama_shut: {value: 0.2, min: 0, max: 1, step: 0.05, label: "Diorama with door shut"}
+ambient_every: {value: 20, min: 5, max: 120, unit: s, label: "Steam every"}

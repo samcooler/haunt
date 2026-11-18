@@ -53,6 +53,14 @@ SHOW_VARS = f"{ROOT}/show/vars"
 SHOW_LOG = f"{ROOT}/show/log"
 
 
+# High-rate outputs (overlay frames): not recorded, not sent to browsers.
+NOISY_OUTPUTS = ("overlay",)
+
+
+def noisy(topic: str) -> bool:
+    return topic.startswith(f"{ROOT}/n/") and topic.rsplit("/", 1)[-1] in NOISY_OUTPUTS and "/out/" in topic
+
+
 def cmd(verb: str) -> str:
     return f"{ROOT}/cmd/{verb}"
 

@@ -25,13 +25,29 @@ class Piece:
         self.name = self.path.name
 
     @property
+    def config(self) -> dict:
+        """piece.yaml: optional settings for the piece as a whole."""
+        return _yaml(self.path / "piece.yaml") or {}
+
+    @property
     def media(self) -> Path:
+        """The media folder: piece.yaml's `media:` (a path, or a list: the first that
+        exists), else media/ beside show.py. Big media lives outside git this way."""
+        want = self.config.get("media")
+        for cand in ([want] if isinstance(want, str) else want or []):
+            path = (self.path / Path(cand).expanduser()).resolve()
+            if path.is_dir():
+                return path
         return self.path / "media"
 
     def watched_files(self) -> list[Path]:
-        files = [p for p in self.path.glob("*.py")]
+        files = list(self.path.glob("*.py")) + list(self.path.glob("*.yaml"))
         files += [self.path / "devices.yaml", self.path / "params.yaml"]
         return files
+
+    def load_yaml(self, name: str) -> Any:
+        """Any other YAML file of the piece (it is watched, so edits reload the show)."""
+        return _yaml(self.path / name)
 
     def mtimes(self) -> dict[str, float]:
         out = {}

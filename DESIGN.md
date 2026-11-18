@@ -106,26 +106,34 @@ MQTT topics and payloads are listed in `haunt/topics.py`. In short:
 
 ## Status
 
-**Built and tested** (`pytest`, plus a live run with mosquitto and simulated nodes):
-- the engine: states, timeouts, idle reset, crash fallback, hot reload, param bindings, recovering nodes;
-- the web panel and console, the HTTP API and the CLI;
-- the recorder, and the Python node agent (simulated nodes, Pi audio).
+**Built and tested** (`pytest`: 29 tests; also live runs against mosquitto with simulated nodes):
+- the engine: states (sync and async), state-scoped handlers and timers (`s.on/every/at/idle`),
+  timeouts, idle reset, crash fallback, hot reload, param bindings, recovering nodes;
+- the web panel, console and browser display nodes (`/display/<name>`), the HTTP API and the CLI;
+- the recorder; the Python node agent: audio layers with ramps and ducking, video loop + clips,
+  text and ASS overlays over the video (tested against a fake mpv);
+- **synclever** (`pieces/synclever`), the port of Pulleys: the whole arc played through in tests.
 
-**Built, compiles for ESP32 / S3 / C3, not yet run on hardware:**
-- the generic firmware: Wi-Fi, broker discovery, assignment, LEDs, inputs, OTA, and serial setup.
+**Built, compiles for ESP32 / S3 / C3, not yet run on hardware:** the generic firmware, which
+covers Wi-Fi, broker discovery, assignment, OTA and serial setup, plus:
+- LEDs: segments (strips and matrices, a brightness cap each), and the effects
+  solid / breathe / chase / rainbow / sparkle / level (drains on the board) / flicker;
+- inputs: button, digital, analog, and motion (Pulleys' IMU pull detector, vendored);
+- switches (relays, latches).
 
-**Written, not yet run on a Pi:** `deploy/install.sh` (AP, mosquitto, services).
+**Written, not yet run on a Pi:** `deploy/install.sh` (AP, mosquitto, hub and node services,
+mpv to the screen over DRM).
 
 ## Next
 
-1. Run the firmware on real boards; measure input-to-LED latency over the AP.
-2. Bring up a hub Pi from `deploy/install.sh`; check the AP with an uplink, and with 10+ ESP32s.
-3. Replay: run a recorded session against an edited show (in the simulator, at speed).
-4. Simulated visitors: scripted and random input generators, for soak tests before an install.
-5. Port the Pulleys piece; it is the real test of the show API.
+1. Hardware: one rope sensor, one extractor and the diorama board on haunt firmware. Check pull
+   detection, input-to-LED latency over the AP, and the level and flicker effects by eye.
+2. A hub Pi from `deploy/install.sh`, with Janis's video and the overlays on the real screen.
+3. Media sync from the Drive into the piece's media folder (rclone) as part of deploy.
+4. Replay: run a recorded session against an edited show (in the simulator, at speed).
+5. Simulated visitors and soak tests (Pulleys' playtest system, rebuilt on the recorder's logs).
 6. Presets: save and recall named sets of params, and commit tuned values back to `params.yaml`.
-7. More node capabilities as pieces need them: LED frame streaming (DDP), video on Pi nodes,
-   touch and IMU inputs, servos and relays.
+7. A console page for mapping ropes on site (pull a rope, pick its colour), writing `devices.yaml`.
 8. A larger AP: a travel router as the AP, with the hub Pi as fallback, for pieces with many nodes.
 
 ## Open questions

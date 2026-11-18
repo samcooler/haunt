@@ -105,9 +105,12 @@ async def _run(args) -> None:
         names = [n for n, d in devices.items() if args.sim == "all" or not d.get("id")]
         for name in names:
             kind = "sim"
+            dev = devices[name]
             agent = make_mqtt_agent(name, host, port, kind=kind,
                                     media_url=f"http://localhost:{args.port}/media",
-                                    audio=bool(devices[name].get("audio")) and not args.mute)
+                                    media_dir=piece.media,
+                                    audio=bool(dev.get("audio")) and not args.mute,
+                                    video=bool(dev.get("video")) and not args.mute)
             tasks.append(asyncio.create_task(agent.run()))
         print(f"simulating: {', '.join(names) or 'nothing (every node has an id; use --sim all)'}")
 
@@ -127,7 +130,9 @@ async def _node(args) -> None:
     host, port = _split_broker(args.broker)
     name = args.name or socket.gethostname().split(".")[0]
     media = args.media or f"http://{host}:{args.http_port}/media"
-    agent = make_mqtt_agent(name, host, port, kind="pi", media_url=media)
+    agent = make_mqtt_agent(name, host, port, kind="pi", media_url=media,
+                            media_dir=Path(args.media_dir).expanduser() if args.media_dir else None,
+                            audio=not args.no_audio, video=args.video)
     print(f"haunt node {name} -> {host}:{port}")
     await agent.run()
 
@@ -345,6 +350,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--broker", default=os.environ.get("HAUNT_BROKER", "haunt.local:1883"))
     p.add_argument("--http-port", type=int, default=8080)
     p.add_argument("--media", help="media URL (default http://<broker host>:8080/media)")
+    p.add_argument("--media-dir", help="use media from this folder when it has the file (the hub's own)")
+    p.add_argument("--video", action="store_true", help="this node shows video (fullscreen mpv)")
+    p.add_argument("--no-audio", action="store_true")
 
     p = sub.add_parser("status", help="show state, nodes, params, recent log")
     p.add_argument("--json", action="store_true")

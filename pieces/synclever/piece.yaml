@@ -1,0 +1,10 @@
+# synclever: the first piece on haunt (formerly Pulleys).
+#
+# The media is too big for git. The hub uses the first of these folders that exists:
+# the real media synced from the Drive, else the test media in the old Pulleys checkout.
+# Layout (as Pulleys): audio_loops/ audio_once/ video_loops/ video_once/, and
+# <node>/<folder>/ for a node's own files (diorama_pi/audio_loops/...).
+media:
+  - /var/lib/haunt/media/synclever
+  - ~/haunt-media/synclever
+  - ../../../pulleys/overlord/media

@@ -1,0 +1,93 @@
+# Every node in synclever. Boards print their id on boot (`?` over serial), and the
+# console lists boards nobody has claimed: put that id on the node here.
+#
+# Rope colours are set here, per rope (`color:`). Re-colour a rope by editing this file:
+# saving it applies at once. Purple ropes are the final's; the other five colours
+# are the rounds'. Placeholder layout until the ropes are run on site.
+
+templates:   # not nodes: shapes the nodes below share (YAML anchors)
+  rope: &rope
+    kind: esp32               # the Pulleys rope sensor board: ESP32-S3 + QMI8658
+    leds:
+      pin: 14
+      count: 93
+      order: GRB
+      max_brightness: 0.21    # the bar's old 54/255; heat budget, the panels are potted
+      segments:
+        - {start: 0, rows: 8, cols: 8, row_major: true, swap_rg: true, brightness: 0.5}   # the 8x8 panel: an RGB chip, half the bar's level (it runs hottest)
+        - {start: 64, count: 29}                                                          # the 14x2 bar
+    inputs:
+      lever: {kind: motion, mode: linear, sensitivity: 0.8, cooldown_ms: 1000, sda: 11, scl: 12}
+
+  extractor: &extractor
+    kind: esp32               # a Pulleys screen board (D1 mini 32) on its own 5 V supply
+    leds:
+      pin: 16
+      count: 614
+      order: GRB
+      max_brightness: 0.3
+      segments:
+        - {start: 0, cols: 64, rows: 8, serpentine: true}   # two 32x8 panels bent into a ring
+        - {start: 512, count: 102, reverse: true}            # the strip hanging below; its first LED is the top
+
+nodes:
+  rope01: {<<: *rope, color: red}
+  rope02: {<<: *rope, color: blue}
+  rope03: {<<: *rope, color: green}
+  rope04: {<<: *rope, color: yellow}
+  rope05: {<<: *rope, color: orange}
+  rope06: {<<: *rope, color: purple}
+  rope07: {<<: *rope, color: red}
+  rope08: {<<: *rope, color: blue}
+  rope09: {<<: *rope, color: green}
+  rope10: {<<: *rope, color: yellow}
+  rope11: {<<: *rope, color: orange}
+  rope12: {<<: *rope, color: purple}
+  rope13: {<<: *rope, color: red}
+  rope14: {<<: *rope, color: blue}
+  rope15: {<<: *rope, color: green}
+  rope16: {<<: *rope, color: yellow}
+  rope17: {<<: *rope, color: orange}
+  rope18: {<<: *rope, color: purple}
+
+  # One per round colour: that colour's charge, poured like liquid.
+  extractor_red: {<<: *extractor, color: red}
+  extractor_blue: {<<: *extractor, color: blue}
+  extractor_green: {<<: *extractor, color: green}
+  extractor_yellow: {<<: *extractor, color: yellow}
+  extractor_orange: {<<: *extractor, color: orange}
+
+  # The diorama: a ceiling of failing fluorescents, the door's latch and switch, and the
+  # "free the spirits" button inside.
+  diorama:
+    kind: esp32
+    leds: {pin: 13, count: 156, order: GRB, max_brightness: 0.6}
+    switches:
+      latch: {pin: 18}                       # on = unlatched (fail-secure strike: power opens it)
+    inputs:
+      door: {pin: 27, kind: digital, invert: true}   # on = open (the switch closes to ground when shut)
+      button: {pin: 25, kind: button}
+
+  # Four AC light strings for the victories (SSRs on a DevKit).
+  party:
+    kind: esp32
+    switches:
+      lights1: {pin: 32}
+      lights2: {pin: 33}
+      lights3: {pin: 25}
+      lights4: {pin: 26}
+
+  # The Overlord: Janis on the big screen, the room's sound. Also the hub.
+  overlord:
+    kind: pi
+    video: true
+    audio: true
+
+  # The diorama's own Pi: the spirits' distress, inside it.
+  diorama_pi:
+    kind: pi
+    audio: true
+
+  # Screens with a browser: open http://haunt.local:8080/display/<name> on them.
+  television: {kind: browser}   # the TV set in the diorama
+  queue: {kind: browser}        # the sign for the line outside
