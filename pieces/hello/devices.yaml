@@ -1,0 +1,23 @@
+# Every node in the piece, by name. The show refers to nodes by these names.
+#
+# `id` binds a name to a physical board (each board prints its id on boot, and the
+# console lists unassigned boards). Swap hardware by changing the id here.
+# A node without an id can still be run simulated: `haunt run pieces/hello --sim`.
+
+nodes:
+  lamp:
+    kind: esp32
+    # id: esp-a1b2c3
+    leds:
+      pin: 14
+      count: 64
+      order: GRB
+      max_brightness: 0.5     # heat budget: the firmware never exceeds this
+    inputs:
+      button: {pin: 4, kind: button}
+      pull: {pin: 34, kind: analog, threshold: 2000, hysteresis: 150}
+
+  speaker:
+    kind: pi
+    # id: pi-speaker
+    audio: true

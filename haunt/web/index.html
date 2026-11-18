@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>haunt</title>
+<style>
+:root {
+  --bg: #0e0f13; --panel: #171920; --line: #2a2d38; --text: #e8e8ee; --dim: #8a8d9a;
+  --ok: #3ecf8e; --bad: #ff5d5d; --warn: #ffb547; --accent: #9d7bff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+button { font: inherit; color: var(--text); background: #232634; border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; cursor: pointer; touch-action: manipulation; }
+button:hover { border-color: var(--accent); }
+button:active { transform: scale(0.97); }
+button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { border-color: #5a2a2a; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.dim { color: var(--dim); }
+.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex: none; }
+.dot.up { background: var(--ok); }
+.banner { display: none; background: #3a1518; border: 1px solid var(--bad); color: #ffd0d0;
+  padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; white-space: pre-wrap; }
+.banner.show { display: block; }
+#conn { position: fixed; top: 8px; right: 12px; font-size: 12px; }
+
+/* operator panel */
+#panel { display: none; padding: 16px; max-width: 900px; margin: 0 auto; }
+#panel .state { font-size: clamp(36px, 9vw, 72px); font-weight: 700; letter-spacing: -1px; margin: 8px 0 0; }
+#panel .since { font-size: 18px; margin-bottom: 20px; }
+#panel .big { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+#panel .big button { font-size: 20px; padding: 26px 12px; border-radius: 14px; }
+#panel .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  display: flex; align-items: center; gap: 8px; }
+.tile.down { border-color: var(--bad); }
+
+/* console */
+#console { display: none; padding: 12px; }
+#console .grid { display: grid; grid-template-columns: 240px 1fr 320px; gap: 12px; align-items: start; }
+@media (max-width: 1000px) { #console .grid { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+.states button { display: block; width: 100%; text-align: left; margin-bottom: 6px; }
+.states button small { float: right; color: var(--dim); }
+.states button.on small { color: #e8e0ff; }
+.node { border-top: 1px solid var(--line); padding: 10px 0; }
+.node:first-child { border-top: 0; padding-top: 0; }
+.node .head { display: flex; align-items: center; gap: 8px; }
+.node .head b { font-size: 16px; }
+.node .meta { font-size: 12px; margin: 2px 0 6px 18px; }
+.node .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: 18px; }
+.swatch { width: 120px; height: 22px; border-radius: 6px; border: 1px solid var(--line); background: #000; }
+.swatch.breathe { animation: breathe 3s ease-in-out infinite; }
+.swatch.rainbow { background: linear-gradient(90deg, red, orange, yellow, lime, cyan, blue, magenta) !important; }
+.swatch.sparkle { animation: sparkle .3s steps(2) infinite; }
+.swatch.chase { background-size: 40px 100% !important; animation: chase 1s linear infinite; }
+@keyframes breathe { 50% { opacity: .25; } }
+@keyframes sparkle { 50% { opacity: .4; } }
+@keyframes chase { to { background-position: 40px 0; } }
+.param { margin-bottom: 12px; }
+.param label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.param label .v { font-family: ui-monospace, Menlo, monospace; }
+.param.mod label .v { color: var(--warn); }
+.param input[type=color] { width: 100%; height: 30px; border: 0; background: none; }
+#log { height: 360px; overflow: auto; }
+#log div { padding: 1px 0; border-bottom: 1px solid #1d1f27; }
+#log .error { color: var(--bad); }
+#log .warn { color: var(--warn); }
+pre { margin: 0; white-space: pre-wrap; }
+.topbar { display: flex; align-items: baseline; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
+.topbar .state { font-size: 26px; font-weight: 700; }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="conn" class="dim">connecting…</div>
+
+<div id="panel">
+  <div class="banner" id="p-error"></div>
+  <div class="dim" id="p-piece"></div>
+  <div class="state" id="p-state">…</div>
+  <div class="since dim" id="p-since"></div>
+  <div class="big" id="p-buttons"></div>
+  <div class="tiles" id="p-nodes"></div>
+  <p class="dim" style="margin-top:28px;font-size:13px">Artist console: <a href="/console">/console</a></p>
+</div>
+
+<div id="console">
+  <div class="banner" id="c-error"></div>
+  <div class="topbar">
+    <span class="dim" id="c-piece"></span>
+    <span class="state" id="c-state">…</span>
+    <span class="dim" id="c-since"></span>
+    <a href="/" style="margin-left:auto">operator panel</a>
+  </div>
+  <div class="grid">
+    <div>
+      <div class="card"><h3>States</h3><div class="states" id="c-states"></div></div>
+      <div class="card"><h3>Operator</h3><div id="c-actions" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
+      <div class="card"><h3>Variables</h3><pre class="mono" id="c-vars"></pre></div>
+    </div>
+    <div>
+      <div class="card"><h3>Nodes</h3><div id="c-nodes"></div></div>
+      <div class="card"><h3>Log</h3><div id="log" class="mono"></div></div>
+    </div>
+    <div>
+      <div class="card"><h3>Params <button style="float:right;padding:2px 8px;font-size:11px" onclick="cmd('param_reset',{})">reset all</button></h3><div id="c-params"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const S = { topics: {}, log: [] };
+const isConsole = location.pathname.startsWith("/console");
+document.getElementById(isConsole ? "console" : "panel").style.display = "block";
+let ws;
+
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => { S.topics = {}; S.log = []; setConn(true); };
+  ws.onclose = () => { setConn(false); setTimeout(connect, 1000); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.topic === "haunt/show/log") { S.log.push(m.p); if (S.log.length > 400) S.log.shift(); appendLog(m.p); return; }
+    if (m.p === null) delete S.topics[m.topic]; else S.topics[m.topic] = m.p;
+    schedule();
+  };
+}
+function setConn(up) {
+  const c = document.getElementById("conn");
+  c.textContent = up ? "live" : "disconnected — retrying";
+  c.style.color = up ? "var(--ok)" : "var(--bad)";
+}
+function send(topic, p) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic, p })); }
+function cmd(verb, p) { send("haunt/cmd/" + verb, p || {}); }
+function input(node, inp, event, value) { send(`haunt/n/${node}/in/${inp}`, { event, value, source: "sim" }); }
+
+let pending = false;
+function schedule() { if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; render(); }); } }
+
+function nodes() {
+  const out = {};
+  for (const [t, p] of Object.entries(S.topics)) {
+    const m = t.match(/^haunt\/n\/([^/]+)\/(status|in|out)(?:\/([^/]+))?$/);
+    if (!m) continue;
+    const n = out[m[1]] ||= { status: null, in: {}, out: {} };
+    if (m[2] === "status") n.status = p; else n[m[2]][m[3]] = p;
+  }
+  return out;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ago = (t) => { const s = Math.max(0, Date.now() / 1000 - t); return s < 60 ? `${s.toFixed(0)}s` : `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`; };
+
+function render() {
+  const show = S.topics["haunt/show/state"] || {};
+  const params = S.topics["haunt/show/params"] || {};
+  const ns = nodes();
+  const devices = show.devices || {};
+  const names = [...new Set([...Object.keys(devices), ...Object.keys(ns)])].sort();
+  const p = isConsole ? "c" : "p";
+  const err = document.getElementById(p + "-error");
+  err.textContent = show.error || ""; err.classList.toggle("show", !!show.error);
+  document.getElementById(p + "-piece").textContent = show.piece || "";
+  document.getElementById(p + "-state").textContent = (show.state || "…") + (show.blackout ? " · blackout" : "");
+  isConsole ? renderConsole(show, params, ns, names, devices) : renderPanel(show, ns, names, devices);
+  tick();
+}
+
+function renderPanel(show, ns, names, devices) {
+  const btns = [`<button onclick="if(confirm('Reset the show to the start?'))cmd('reset')">Reset</button>`];
+  for (const a of show.actions || []) btns.push(`<button title="${esc(a.doc)}" onclick="cmd('action',{name:${esc(JSON.stringify(a.label))}})">${esc(a.label)}</button>`);
+  btns.push(`<button class="${show.blackout ? "on" : ""} danger" onclick="cmd('blackout',{on:${!show.blackout}})">${show.blackout ? "Lights back on" : "Blackout"}</button>`);
+  setHTML("p-buttons", btns.join(""));
+  setHTML("p-nodes", names.filter(n => devices[n]).map(n => {
+    const up = ns[n]?.status?.online;
+    return `<div class="tile ${up ? "" : "down"}"><span class="dot ${up ? "up" : ""}"></span>${esc(n)}</div>`;
+  }).join(""));
+}
+
+function swatch(leds) {
+  if (!leds) return `<div class="swatch" title="no output yet"></div>`;
+  const eff = leds.effect || "solid";
+  const c = leds.color || "#ffffff", c2 = leds.color2 || "#000000";
+  const op = eff === "off" ? 0 : Math.max(0.15, leds.brightness ?? 1);
+  const bg = eff === "chase" ? `repeating-linear-gradient(90deg, ${c} 0 20px, ${c2} 20px 40px)` : c;
+  return `<div class="swatch ${eff}" style="background:${bg};opacity:${op}" title="${esc(JSON.stringify(leds))}"></div>`;
+}
+
+function inputControls(name, dev, n) {
+  const ins = dev.inputs || {};
+  return Object.entries(ins).map(([inp, cfg]) => {
+    const kind = cfg.kind || "button";
+    const last = n?.in?.[inp];
+    const val = last && last.value !== undefined && last.value !== null ? ` <span class="dim mono">${esc(last.value)}</span>` : "";
+    const q = (s) => esc(JSON.stringify(s));
+    if (kind === "analog") {
+      const th = cfg.threshold ?? 2000;
+      return `<span class="dim">${esc(inp)}</span>
+        <button onclick="input(${q(name)},${q(inp)},'on',${th + 100})">on</button>
+        <button onclick="input(${q(name)},${q(inp)},'off',${th - 100})">off</button>${val}`;
+    }
+    return `<button onclick="input(${q(name)},${q(inp)},'press')">${esc(inp)}</button>${val}`;
+  }).join(" ");
+}
+
+function renderConsole(show, params, ns, names, devices) {
+  setHTML("c-states", (show.states || []).map(st => {
+    const on = st.name === show.state;
+    const t = st.timeout ? `${st.timeout}s → ${st.then || show.initial}` : (st.name === show.initial ? "initial" : "");
+    return `<button class="${on ? "on" : ""}" title="${esc(st.doc)}" onclick="cmd('goto',{state:${esc(JSON.stringify(st.name))}})">${esc(st.name)}<small>${esc(t)}</small></button>`;
+  }).join("") + (show.idle_reset ? `<div class="dim" style="font-size:12px">idle reset after ${show.idle_reset}s</div>` : ""));
+
+  const acts = [`<button onclick="if(confirm('Reset?'))cmd('reset')">Reset</button>`];
+  for (const a of show.actions || []) acts.push(`<button title="${esc(a.doc)}" onclick="cmd('action',{name:${esc(JSON.stringify(a.label))}})">${esc(a.label)}</button>`);
+  acts.push(`<button class="${show.blackout ? "on" : ""}" onclick="cmd('blackout',{on:${!show.blackout}})">Blackout</button>`);
+  setHTML("c-actions", acts.join(""));
+  setHTML("c-vars", esc(JSON.stringify(S.topics["haunt/show/vars"] || {}, null, 1)));
+
+  setHTML("c-nodes", names.map(name => {
+    const n = ns[name], dev = devices[name], st = n?.status || {};
+    const up = st.online;
+    const meta = [dev ? (dev.kind || "") : "not in devices.yaml", st.id && st.id !== name ? st.id : "", st.fw, st.ip,
+                  st.rssi != null ? `${st.rssi} dBm` : "", st.uptime != null ? `up ${st.uptime}s` : ""].filter(Boolean).join(" · ");
+    const unassigned = !dev && st.id === name;
+    const q = esc(JSON.stringify(name));
+    return `<div class="node"><div class="head"><span class="dot ${up ? "up" : ""}"></span><b>${esc(name)}</b>
+        ${unassigned ? `<span class="mono" style="color:var(--warn)">unassigned: add <b>id: ${esc(name)}</b> to a node</span>` : ""}
+        <span style="margin-left:auto"></span>${up && st.kind !== "sim" ? `<button onclick="cmd('identify',{node:${q}})">identify</button>` : ""}</div>
+      <div class="meta dim">${esc(meta)}</div>
+      <div class="row">${dev?.leds || n?.out?.leds ? swatch(n?.out?.leds) : ""}
+        ${n?.out?.audio ? `<span class="dim mono">♪ ${esc(n.out.audio.stop ? "stopped" : n.out.audio.file)}</span>` : ""}
+        ${dev ? inputControls(name, dev, n) : ""}</div></div>`;
+  }).join("") || `<span class="dim">no nodes</span>`);
+
+  const box = document.getElementById("c-params");
+  const focused = box.contains(document.activeElement) ? document.activeElement.dataset.name : null;
+  const html = Object.entries(params).map(([name, p]) => {
+    const q = esc(JSON.stringify(name));
+    const label = `<label><span>${esc(p.label || name)}</span><span class="v">${esc(p.value)}${esc(p.unit ? " " + p.unit : "")}${p.modified ? ` <a href="#" title="back to ${esc(p.default)}" onclick="cmd('param_reset',{name:${q}});return false">↺</a>` : ""}</span></label>`;
+    let ctl;
+    if (p.type === "color") ctl = `<input type="color" data-name="${esc(name)}" value="${esc(p.value)}" oninput="setParam(${q}, this.value)">`;
+    else if (p.type === "bool") ctl = `<button class="${p.value ? "on" : ""}" onclick="setParam(${q}, ${!p.value})">${p.value ? "on" : "off"}</button>`;
+    else if (p.type === "int" || p.type === "float") {
+      const min = p.min ?? 0, max = p.max ?? Math.max(1, (p.default || 1) * 4);
+      const step = p.step ?? (p.type === "int" ? 1 : (max - min) / 100);
+      ctl = `<input type="range" data-name="${esc(name)}" min="${min}" max="${max}" step="${step}" value="${p.value}" oninput="setParam(${q}, +this.value)">`;
+    } else ctl = `<input data-name="${esc(name)}" value="${esc(p.value)}" onchange="setParam(${q}, this.value)" style="width:100%">`;
+    return `<div class="param ${p.modified ? "mod" : ""}">${label}${ctl}</div>`;
+  }).join("") || `<span class="dim">no params</span>`;
+  // Don't rebuild the params under a finger or mouse that is dragging a slider.
+  if (!focused || !dragging) setHTML("c-params", html);
+}
+
+let dragging = false;
+addEventListener("pointerdown", e => { if (e.target.matches?.("input")) dragging = true; });
+addEventListener("pointerup", () => { if (dragging) { dragging = false; schedule(); } });
+let paramTimer = {};
+function setParam(name, value) {
+  clearTimeout(paramTimer[name]);
+  paramTimer[name] = setTimeout(() => cmd("param", { name, value }), 40);
+}
+
+const lastHTML = {};
+function setHTML(id, html) { if (lastHTML[id] !== html) { lastHTML[id] = html; document.getElementById(id).innerHTML = html; } }
+
+function appendLog(l) {
+  const box = document.getElementById("log");
+  if (!box) return;
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+  const d = document.createElement("div");
+  d.className = l.level;
+  d.textContent = `${new Date(l.t * 1000).toLocaleTimeString()} ${l.msg}`;
+  box.appendChild(d);
+  while (box.childElementCount > 400) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function tick() {
+  const show = S.topics["haunt/show/state"];
+  if (!show) return;
+  const st = (show.states || []).find(s => s.name === show.state);
+  let txt = `for ${ago(show.since)}`;
+  if (st?.timeout) txt += ` · ${Math.max(0, st.timeout - (Date.now() / 1000 - show.since)).toFixed(0)}s left`;
+  document.getElementById(isConsole ? "c-since" : "p-since").textContent = txt;
+}
+setInterval(tick, 500);
+connect();
+</script>
+</body>
+</html>

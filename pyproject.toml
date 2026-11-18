@@ -1,0 +1,31 @@
+[project]
+name = "haunt"
+version = "0.1.0"
+description = "A runtime for interactive, immersive art: Pis, ESP32s and browsers on one MQTT bus."
+requires-python = ">=3.11"
+dependencies = [
+    "aiomqtt>=2.3",
+    "aiohttp>=3.9",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+haunt = "haunt.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["haunt*"]
+
+[tool.setuptools.package-data]
+haunt = ["web/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
