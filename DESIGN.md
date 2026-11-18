@@ -134,7 +134,8 @@ mpv to the screen over DRM).
 5. Simulated visitors and soak tests (Pulleys' playtest system, rebuilt on the recorder's logs).
 6. Presets: save and recall named sets of params, and commit tuned values back to `params.yaml`.
 7. A console page for mapping ropes on site (pull a rope, pick its colour), writing `devices.yaml`.
-8. A larger AP: a travel router as the AP, with the hub Pi as fallback, for pieces with many nodes.
+8. Router mode on real hardware: a home router as the show's Wi-Fi, the hub wired to it and on a
+   phone hotspot for internet (`install.sh --router`); count how many boards it holds.
 
 ## Open questions
 

@@ -39,6 +39,8 @@ WiFiClient net;
 PubSubClient mqtt(net);
 
 String hwid, name, ssid, pass, brokerSetting, brokerResolved;
+String lastBroker, hubAddr;   // the hub's address that last worked; the hub's own (piece.yaml `hub:`)
+uint32_t brokerTry = 0;       // which candidate the next connection attempt uses
 uint32_t lastStatus = 0, lastConnectTry = 0, bootMs = 0;
 bool mqttWasUp = false;
 
@@ -483,9 +485,10 @@ void publishStatus(bool online = true) {
 }
 
 void whoami() {
-  Serial.printf("HAUNT-ID id=%s name=%s fw=\"%s\" env=%s chip=%s ip=%s broker=%s mqtt=%s\n", hwid.c_str(),
-                name.c_str(), FW, HAUNT_ENV, ESP.getChipModel(), WiFi.localIP().toString().c_str(),
-                brokerResolved.c_str(), mqtt.connected() ? "up" : "down");
+  Serial.printf("HAUNT-ID id=%s name=%s fw=\"%s\" env=%s chip=%s ip=%s broker=%s mqtt=%s last=%s hub=%s\n",
+                hwid.c_str(), name.c_str(), FW, HAUNT_ENV, ESP.getChipModel(),
+                WiFi.localIP().toString().c_str(), brokerResolved.c_str(), mqtt.connected() ? "up" : "down",
+                lastBroker.c_str(), hubAddr.c_str());
 }
 
 // ---------------------------------------------------------------- OTA
@@ -521,6 +524,11 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
 
   if (t == tAssign()) {
     String newName = empty ? hwid : String(d["name"] | hwid.c_str());
+    String hub = empty ? "" : String(d["hub"] | "");
+    if (hub.length() && hub != hubAddr) {
+      hubAddr = hub;
+      prefs.putString("hub", hubAddr);
+    }
     if (!empty && !d["config"].isNull()) {
       String cfg;
       serializeJson(d["config"], cfg);
@@ -548,21 +556,38 @@ void onMessage(char *topic, byte *payload, unsigned int len) {
   else if (out == "reboot") ESP.restart();
 }
 
+// Where the hub might be, in the order tried. Each failed attempt moves on to the
+// next; a connection that works stays put and is remembered for next boot.
+//   1. `broker <host>` set over serial      (an explicit choice: tried first)
+//   2. haunt.local                           (mDNS: works on the hub's AP and most routers)
+//   3. the address that last worked          (saved on this board)
+//   4. the hub's fixed IP                    (piece.yaml `hub:`, sent with this board's config)
+//   5. the gateway                           (on the hub's own AP, the hub is the gateway)
+String brokerCandidate(uint32_t i) {
+  String c[5];
+  int n = 0;
+  if (brokerSetting.length()) c[n++] = brokerSetting;
+  c[n++] = "haunt.local";
+  if (lastBroker.length()) c[n++] = lastBroker;
+  if (hubAddr.length() && hubAddr != lastBroker) c[n++] = hubAddr;
+  c[n++] = "gateway";
+  return c[i % n];
+}
+
 bool resolveBroker() {
-  String b = brokerSetting;
-  if (b.isEmpty()) b = "haunt.local";
-  if (b.endsWith(".local")) {
-    IPAddress ip = MDNS.queryHost(b.substring(0, b.length() - 6), 1500);
-    if (ip != IPAddress(0, 0, 0, 0)) {
-      brokerResolved = ip.toString();
-      return true;
-    }
-    if (!brokerSetting.isEmpty()) return false;
-    // On the hub's own access point the hub is the gateway.
+  String b = brokerCandidate(brokerTry);
+  if (b == "gateway") {
     brokerResolved = WiFi.gatewayIP().toString();
-    return true;
+  } else if (b.endsWith(".local")) {
+    IPAddress ip = MDNS.queryHost(b.substring(0, b.length() - 6), 1500);
+    if (ip == IPAddress(0, 0, 0, 0)) {
+      Serial.printf("mqtt: %s did not resolve\n", b.c_str());
+      return false;
+    }
+    brokerResolved = ip.toString();
+  } else {
+    brokerResolved = b;
   }
-  brokerResolved = b;
   return true;
 }
 
@@ -582,7 +607,7 @@ void tickMqtt() {
   if (WiFi.status() != WL_CONNECTED || millis() - lastConnectTry < 2000) return;
   lastConnectTry = millis();
   if (!resolveBroker()) {
-    Serial.printf("cannot resolve broker %s\n", brokerSetting.c_str());
+    brokerTry++;
     return;
   }
   mqtt.setServer(brokerResolved.c_str(), 1883);
@@ -594,8 +619,13 @@ void tickMqtt() {
     publishStatus();
     lastStatus = millis();
     Serial.printf("mqtt up: %s as %s\n", brokerResolved.c_str(), name.c_str());
+    if (brokerResolved != lastBroker) {      // remember it (written only when it changes)
+      lastBroker = brokerResolved;
+      prefs.putString("lastbroker", lastBroker);
+    }
   } else {
     Serial.printf("mqtt connect to %s failed (%d)\n", brokerResolved.c_str(), mqtt.state());
+    brokerTry++;
   }
 }
 
@@ -616,8 +646,9 @@ void serialCommand(String line) {
   } else if (cmd == "broker") {
     prefs.putString("broker", arg);
     brokerSetting = arg;
+    brokerTry = 0;
     mqtt.disconnect();
-    Serial.printf("broker = %s\n", arg.isEmpty() ? "(auto: haunt.local, else gateway)" : arg.c_str());
+    Serial.printf("broker = %s\n", arg.isEmpty() ? "(auto: haunt.local, last, hub, gateway)" : arg.c_str());
   } else if (cmd == "forget") {
     prefs.clear();
     Serial.println("settings cleared; rebooting");
@@ -658,6 +689,8 @@ void setup() {
   ssid = prefs.getString("ssid", HAUNT_WIFI_SSID);
   pass = prefs.getString("pass", HAUNT_WIFI_PASS);
   brokerSetting = prefs.getString("broker", "");
+  lastBroker = prefs.getString("lastbroker", "");
+  hubAddr = prefs.getString("hub", "");
   loadSavedConfig();
 
   WiFi.mode(WIFI_STA);

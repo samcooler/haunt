@@ -5,13 +5,44 @@
 #                                        with a node name, this Pi is also that node (video + audio)
 #   sudo deploy/install.sh node [name]   a satellite: plays audio for the show (name: default hostname)
 #
-# Run it from the haunt checkout on the Pi. Safe to rerun.
+# Run it from the haunt checkout on the Pi. Safe to rerun, and to rerun in the other mode.
 #
-# The hub's AP uses NetworkManager's "shared" mode: it hands out addresses, and if
-# the Pi has another way out (Ethernet, a phone on USB tethering, a 4G dongle) it
-# shares that internet with everything on the AP, laptop included.
+# The hub's network, two ways:
+#
+#   AP mode (the default): the hub's own Wi-Fi is the show's network, "haunt". It uses
+#   NetworkManager's "shared" mode: it hands out addresses, and if the Pi has another
+#   way out (Ethernet, a phone on USB) it shares that internet with everything on it.
+#   Fine for a dozen or so boards; the Pi's radio is not made for more.
+#
+#   Router mode (--router --uplink SSID --uplink-psk PSK): a Wi-Fi router is the
+#   show's network, and the hub is wired to it. The hub's Wi-Fi instead joins your
+#   phone's hotspot (or any network with internet), which your laptop joins too:
+#
+#       phone hotspot ──Wi-Fi── laptop
+#            └──Wi-Fi── hub Pi ──Ethernet── router ──2.4 GHz── boards, screens
+#
+#   Ethernet is never the default route (a router with nothing in its WAN port would
+#   swallow internet traffic), so the internet goes via the hotspot. If no router is
+#   on the Ethernet 45 s after boot, the hub falls back to being the AP itself.
+#   Set the router's 2.4 GHz network to the same name and password as the hub's AP
+#   ($HAUNT_SSID / $HAUNT_PSK, default haunt / hauntnet) and the boards join either.
 
 set -euo pipefail
+
+NET=ap
+UPLINK_SSID=""
+UPLINK_PSK=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --router) NET=router; shift ;;
+    --ap) NET=ap; shift ;;
+    --uplink) UPLINK_SSID="$2"; shift 2 ;;
+    --uplink-psk) UPLINK_PSK="$2"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]}"
 
 ROLE="${1:-}"
 PIECE="${2:-hello}"
@@ -22,7 +53,11 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 USER_NAME="${SUDO_USER:-$(id -un)}"
 
 if [[ "$ROLE" != hub && "$ROLE" != node ]]; then
-  echo "usage: sudo $0 hub [piece] [node] | node [name]" >&2
+  echo "usage: sudo $0 hub [piece] [node] [--router --uplink SSID --uplink-psk PSK] | node [name]" >&2
+  exit 2
+fi
+if [[ "$ROLE" == hub && "$NET" == router && -z "$UPLINK_SSID" ]]; then
+  echo "router mode needs --uplink <your hotspot's name> (and --uplink-psk <its password>)" >&2
   exit 2
 fi
 if [[ $EUID -ne 0 ]]; then
@@ -55,15 +90,72 @@ EOF
   systemctl enable --now mosquitto
   systemctl restart mosquitto
 
-  echo "== Wi-Fi access point '$SSID'"
-  if ! nmcli -t -f NAME connection show | grep -qx haunt-ap; then
-    nmcli connection add type wifi ifname wlan0 con-name haunt-ap autoconnect yes ssid "$SSID" \
+  has_con() { nmcli -t -f NAME connection show | grep -qx "$1"; }
+
+  # The AP profile exists in both modes: in router mode it is the fallback.
+  if ! has_con haunt-ap; then
+    nmcli connection add type wifi ifname wlan0 con-name haunt-ap autoconnect no ssid "$SSID" \
       802-11-wireless.mode ap 802-11-wireless.band bg 802-11-wireless.channel 6 \
       ipv4.method shared ipv4.addresses 10.77.0.1/24 \
       wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PSK" >/dev/null
   fi
-  nmcli connection modify haunt-ap connection.autoconnect-priority 100 802-11-wireless.powersave 2
-  nmcli connection up haunt-ap >/dev/null || echo "   (AP did not come up now; it will at boot)"
+  nmcli connection modify haunt-ap 802-11-wireless.powersave 2
+
+  if [[ "$NET" == ap ]]; then
+    echo "== network: AP mode, Wi-Fi '$SSID' from the hub itself"
+    nmcli connection modify haunt-ap connection.autoconnect yes connection.autoconnect-priority 100
+    if has_con haunt-uplink; then nmcli connection modify haunt-uplink connection.autoconnect no; fi
+    if has_con haunt-lan; then nmcli connection delete haunt-lan >/dev/null; fi
+    systemctl disable --now haunt-netcheck.service 2>/dev/null || true
+    nmcli connection up haunt-ap >/dev/null || echo "   (AP did not come up now; it will at boot)"
+  else
+    echo "== network: router mode (show on Ethernet, internet from '$UPLINK_SSID')"
+    # Ethernet: the show's router. Its DHCP gives the hub an address (reserve one for the
+    # hub on the router), but never the default route or DNS: those come from the uplink.
+    for con in $(nmcli -t -f NAME,TYPE connection show | awk -F: '$2 == "802-3-ethernet" {print $1}'); do
+      [[ "$con" == haunt-lan ]] || nmcli connection modify "$con" connection.autoconnect no
+    done
+    if ! has_con haunt-lan; then
+      nmcli connection add type ethernet ifname eth0 con-name haunt-lan >/dev/null
+    fi
+    nmcli connection modify haunt-lan connection.autoconnect yes connection.autoconnect-priority 100 \
+      ipv4.method auto ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method ignore
+    # Wi-Fi: the phone's hotspot, for the internet.
+    if has_con haunt-uplink; then nmcli connection delete haunt-uplink >/dev/null; fi
+    if [[ -n "$UPLINK_PSK" ]]; then
+      nmcli connection add type wifi ifname wlan0 con-name haunt-uplink ssid "$UPLINK_SSID" \
+        wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$UPLINK_PSK" >/dev/null
+    else
+      nmcli connection add type wifi ifname wlan0 con-name haunt-uplink ssid "$UPLINK_SSID" >/dev/null
+    fi
+    nmcli connection modify haunt-uplink connection.autoconnect yes connection.autoconnect-priority 100 \
+      ipv4.route-metric 50 802-11-wireless.powersave 2
+    nmcli connection modify haunt-ap connection.autoconnect no
+    # No router on the Ethernet after boot: the hub becomes the show's AP itself.
+    install -m 755 "$REPO/deploy/haunt-netcheck.sh" /usr/local/bin/haunt-netcheck
+    cat > /etc/systemd/system/haunt-netcheck.service <<EOF
+[Unit]
+Description=haunt: be the AP if the show's router is not there
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/haunt-netcheck 45
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable haunt-netcheck.service
+    nmcli connection up haunt-lan >/dev/null || echo "   (no router on the Ethernet now)"
+    nmcli connection up haunt-uplink >/dev/null || echo "   (hotspot '$UPLINK_SSID' not in range now; it joins when it is)"
+    LAN_IP="$(ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    LAN_MAC="$(cat /sys/class/net/eth0/address)"
+    echo "   On the router: reserve ${LAN_IP:-an address} for the hub (MAC $LAN_MAC), give its"
+    echo "   2.4 GHz network the name '$SSID' and password '$PSK', turn off client/AP isolation."
+    echo "   In pieces/$PIECE/piece.yaml:  hub: ${LAN_IP:-<that address>}"
+  fi
 
   echo "== service haunt-hub (piece: $PIECE)"
   cat > /etc/default/haunt <<EOF
@@ -115,7 +207,12 @@ EOF
     systemctl enable --now haunt-node
     systemctl restart haunt-node
   fi
-  echo "done: join Wi-Fi '$SSID' and open http://haunt.local:8080/ (or http://10.77.0.1:8080/)"
+  if [[ "$NET" == ap ]]; then
+    echo "done: join Wi-Fi '$SSID' and open http://haunt.local:8080/ (or http://10.77.0.1:8080/)"
+  else
+    echo "done: join '$UPLINK_SSID' (or the router's Wi-Fi) and open http://haunt.local:8080/"
+    echo "      (if haunt.local does not resolve on the hotspot: http://<the hub's hotspot IP>:8080/)"
+  fi
 else
   echo "== join the haunt AP"
   if ! nmcli -t -f NAME connection show | grep -qx haunt; then

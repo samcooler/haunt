@@ -236,3 +236,11 @@ async def test_new_piece_scaffold_runs(tmp_path):
     await press(bus, node="thing")
     assert eng.state == "active" and eng.vars.visits == 1
     eng.stop()
+
+
+async def test_assignment_carries_the_hub_address(tmp_path):
+    piece = make_piece(tmp_path, SIMPLE, 'color: "#123456"')
+    (piece.path / "piece.yaml").write_text("hub: 192.168.8.10\n")
+    eng, bus = await start(piece, tmp_path)
+    assert bus.retained[topics.assign("esp-000001")]["hub"] == "192.168.8.10"
+    eng.stop()

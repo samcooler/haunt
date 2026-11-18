@@ -360,7 +360,11 @@ class Engine:
                 continue
             ids.add(hwid)
             config = {k: v for k, v in node.items() if k not in ("id", "sim", "kind", "note")}
-            self._pub(topics.assign(hwid), {"name": name, "config": config}, retain=True)
+            msg = {"name": name, "config": config}
+            hub = self.piece.config.get("hub")   # the hub's fixed IP: a board's fallback if mDNS fails
+            if hub:
+                msg["hub"] = str(hub)
+            self._pub(topics.assign(hwid), msg, retain=True)
         for gone in self._assigned - ids:
             self._pub(topics.assign(gone), None, retain=True)
         self._assigned = ids

@@ -37,6 +37,19 @@ git clone <this repo> ~/haunt && cd ~/haunt
 sudo deploy/install.sh hub hello
 ```
 
+**Hub on a Wi-Fi router** (for more than a dozen or so boards, and internet on site): wire the
+hub to any Wi-Fi router, and have the hub and your laptop join your phone's hotspot:
+
+```sh
+sudo deploy/install.sh hub hello --router --uplink "My iPhone" --uplink-psk "hotspot password"
+```
+
+It prints what to set on the router: a reserved address for the hub, and the 2.4 GHz network
+named `haunt` / `hauntnet` so the boards join either it or the hub's own AP. Then put that address
+in the piece's `piece.yaml` as `hub: 192.168.x.y`; boards use it if `haunt.local` does not resolve.
+With no router on the Ethernet at boot, the hub becomes the AP itself (`haunt-netcheck uplink`
+switches back to the hotspot later).
+
 **Satellite Pi** (audio): `sudo deploy/install.sh node`. Then add its hostname to `devices.yaml`.
 
 **ESP32**: flash once over USB, then everything else is done from the hub:
@@ -45,7 +58,9 @@ sudo deploy/install.sh hub hello
 cd firmware && pio run -e esp32 -t upload     # or esp32s3, esp32c3
 ```
 
-The board joins `haunt` and finds the broker. Its id (e.g. `esp-a1b2c3`) shows up in
+The board joins `haunt` and finds the hub. It tries, in turn, `haunt.local`, the
+last address that worked, the piece's `hub:` address and the gateway, then stays with
+the first that answers. Its id (e.g. `esp-a1b2c3`) shows up in
 the console as unassigned; put `id: esp-a1b2c3` under a node in `devices.yaml`.
 Over serial at 115200: `?` prints its id and state, `wifi <ssid> <pass>` and
 `broker <host>` point it somewhere else (e.g. your laptop at home), and `forget`

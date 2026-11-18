@@ -8,3 +8,7 @@ media:
   - /var/lib/haunt/media/synclever
   - ~/haunt-media/synclever
   - ../../../pulleys/overlord/media
+
+# The hub's fixed address on the show's router (router mode, deploy/install.sh --router).
+# Boards fall back to it when haunt.local does not resolve. Not needed in AP mode.
+# hub: 192.168.8.10
